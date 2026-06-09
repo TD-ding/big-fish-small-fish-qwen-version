@@ -28,6 +28,22 @@
             display: block;
             max-width: 100vw;
             max-height: 100vh;
+            transition: border-color 0.15s;
+        }
+        canvas.shake {
+            animation: shakeAnim 0.4s ease-out;
+            border-color: #ef5350 !important;
+        }
+        @keyframes shakeAnim {
+            0%, 100% { transform: translateX(0); }
+            10% { transform: translateX(-8px) translateY(3px); }
+            20% { transform: translateX(8px) translateY(-3px); }
+            30% { transform: translateX(-6px) translateY(2px); }
+            40% { transform: translateX(6px) translateY(-2px); }
+            50% { transform: translateX(-4px) translateY(1px); }
+            60% { transform: translateX(4px) translateY(-1px); }
+            70% { transform: translateX(-2px); }
+            80% { transform: translateX(2px); }
         }
         #ui {
             position: absolute;
@@ -39,7 +55,24 @@
             pointer-events: none;
         }
         #ui div { margin-bottom: 5px; }
-        #startScreen, #gameOverScreen, #pauseOverlay {
+        #comboDisplay {
+            position: absolute;
+            top: 10px;
+            right: 15px;
+            font-size: 28px;
+            font-weight: bold;
+            color: #ffd54f;
+            text-shadow: 0 0 10px rgba(255, 213, 79, 0.5);
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s, transform 0.3s;
+            transform: scale(0.8);
+        }
+        #comboDisplay.active {
+            opacity: 1;
+            transform: scale(1);
+        }
+        #startScreen, #gameOverScreen, #pauseOverlay, #countdownOverlay {
             position: absolute;
             top: 0; left: 0;
             width: 100%; height: 100%;
@@ -84,6 +117,13 @@
         }
         #pauseOverlay h1 { font-size: 42px; color: #4fc3f7; }
         #pauseOverlay p { font-size: 18px; color: #b0bec5; margin-top: 10px; }
+        #countdownOverlay {
+            background: rgba(10, 22, 40, 0.6);
+            font-size: 120px;
+            font-weight: bold;
+            color: #4fc3f7;
+            text-shadow: 0 0 40px rgba(79, 195, 247, 0.6);
+        }
         .hidden { display: none !important; }
     </style>
 </head>
@@ -96,6 +136,7 @@
             <div>🐠 吃掉: <span id="eaten">0</span> 条鱼</div>
             <div>🏆 最高: <span id="highScoreDisplay">0</span></div>
         </div>
+        <div id="comboDisplay"></div>
         <div id="startScreen">
             <h1>🐟 大鱼吃小鱼 🐟</h1>
             <p>用鼠标/触屏或方向键控制你的鱼</p>
@@ -103,28 +144,29 @@
             <p>躲开比你大的鱼，否则会被吃掉！</p>
             <p style="color:#66bb6a">💚 绿色光晕 = 可以吃</p>
             <p style="color:#ef5350">❤️ 红色光晕 = 危险！快跑</p>
-            <button class="btn" onclick="startGame()">开始游戏</button>
+            <p style="color:#ffd54f">⚡ 快速连吃获得 Combo 加分！</p>
+            <button class="btn" onclick="beginCountdown()">开始游戏</button>
         </div>
         <div id="gameOverScreen" class="hidden">
             <h1>游戏结束</h1>
             <p>你被更大的鱼吃掉了！</p>
             <div id="finalScore">0</div>
             <p>最终得分</p>
+            <p id="finalCombo" style="color:#ffd54f"></p>
             <p id="newHighScore" class="hidden" style="color:#ffd54f;font-size:22px">🎉 新纪录！</p>
-            <button class="btn" onclick="startGame()">再来一次</button>
+            <button class="btn" onclick="beginCountdown()">再来一次</button>
         </div>
         <div id="pauseOverlay" class="hidden">
             <h1>⏸️ 暂停中</h1>
             <p>按 P 或 Esc 继续游戏</p>
         </div>
+        <div id="countdownOverlay" class="hidden">3</div>
     </div>
 
     <script>
         // ========== 游戏配置常量 ==========
         const CONFIG = {
-            // 画布
-            CANVAS_W: 900,
-            CANVAS_H: 600,
+            CANVAS_W: 900, CANVAS_H: 600,
             // 玩家
             PLAYER_INIT_SIZE: 20,
             PLAYER_INIT_SPEED: 3,
@@ -163,24 +205,27 @@
             FISH_SIMILAR_SIZE_MAX: 1.2,
             FISH_BIG_SIZE_MIN: 1.2,
             FISH_BIG_SIZE_MAX: 2.0,
-            // AI鱼互相吃
             FISH_AI_EAT_THRESHOLD: 1.1,
             FISH_AI_COLLISION_FACTOR: 0.6,
             FISH_AI_EAT_GROWTH: 0.1,
-            // 分数
+            // 分数 & Combo
             SCORE_PER_SIZE: 10,
+            COMBO_WINDOW_MS: 2000,       // 连击时间窗口(毫秒)
+            COMBO_MULTIPLIER_STEP: 0.5,  // 每次连击额外倍率
+            COMBO_MAX: 10,               // 最大连击数
+            // 分数弹出
+            SCORE_POPUP_DURATION: 60,    // 弹出持续帧数
+            SCORE_POPUP_RISE_SPEED: 1.5, // 弹出上升速度
+            SCORE_POPUP_FADE: 0.018,     // 弹出透明度衰减
             // 气泡
             BUBBLE_SPAWN_CHANCE: 0.02,
-            BUBBLE_SIZE_MIN: 2,
-            BUBBLE_SIZE_RANGE: 5,
-            BUBBLE_SPEED_MIN: 0.3,
-            BUBBLE_SPEED_RANGE: 0.7,
+            BUBBLE_SIZE_MIN: 2, BUBBLE_SIZE_RANGE: 5,
+            BUBBLE_SPEED_MIN: 0.3, BUBBLE_SPEED_RANGE: 0.7,
             // 粒子
             EAT_PARTICLE_COUNT: 8,
             PARTICLE_FADE_RATE: 0.02,
             PARTICLE_SHRINK: 0.98,
-            PARTICLE_SIZE_MIN: 2,
-            PARTICLE_SIZE_RANGE: 3,
+            PARTICLE_SIZE_MIN: 2, PARTICLE_SIZE_RANGE: 3,
             PARTICLE_SPEED_RANGE: 2,
             // 视觉提示
             SIZE_INDICATOR_RANGE: 250,
@@ -190,36 +235,39 @@
             INDICATOR_STROKE_RED: 'rgba(239, 83, 80, 0.8)',
             // 帧率
             TARGET_FRAME_MS: 1000 / 60,
-            // 尾摆
+            // 鱼外观
             TAIL_WAGGLE_SPEED: 0.1,
             TAIL_WAGGLE_AMP: 0.3,
-            // 海藻
-            SEAWEED_COUNT: 8,
-            SEAWEED_SPACING: 120,
-            SEAWEED_START_X: 60,
-            SEAWEED_SEGMENTS: 5,
-            SEAWEED_SEG_HEIGHT: 30,
-            // 光线
-            LIGHT_RAY_COUNT: 5,
-            LIGHT_RAY_SPACING: 180,
-            LIGHT_RAY_START: 150,
-            LIGHT_RAY_OFFSET: 50,
-            // 方向检测阈值
             DIR_THRESHOLD: 0.1,
-            // 鼠标控制死区
-            MOUSE_DEAD_ZONE: 5
+            MOUSE_DEAD_ZONE: 5,
+            // 鱼的种类(体型影响花纹)
+            FISH_PATTERN_SPOTS: 0,   // 小鱼：无花纹
+            FISH_PATTERN_STRIPES: 1, // 中鱼：条纹
+            FISH_PATTERN_DOTS: 2,    // 大鱼：斑点
+            FISH_PATTERN_SIZE_THRESHOLD: 25, // > 此size显示条纹
+            FISH_PATTERN_BIG_THRESHOLD: 45,  // > 此size显示斑点
+            // 海藻
+            SEAWEED_COUNT: 8, SEAWEED_SPACING: 120, SEAWEED_START_X: 60,
+            SEAWEED_SEGMENTS: 5, SEAWEED_SEG_HEIGHT: 30,
+            // 光线
+            LIGHT_RAY_COUNT: 5, LIGHT_RAY_SPACING: 180,
+            LIGHT_RAY_START: 150, LIGHT_RAY_OFFSET: 50,
+            // 倒计时
+            COUNTDOWN_SECONDS: 3,
+            COUNTDOWN_MS: 1000,
+            // 开始界面动画鱼数量
+            MENU_FISH_COUNT: 12
         };
 
-        // ========== 初始化画布与DOM ==========
+        // ========== 初始化 ==========
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         const W = CONFIG.CANVAS_W;
         const H = CONFIG.CANVAS_H;
 
-        // 离屏canvas缓存静态背景（光线部分）
+        // 离屏canvas缓存静态背景
         const bgCanvas = document.createElement('canvas');
-        bgCanvas.width = W;
-        bgCanvas.height = H;
+        bgCanvas.width = W; bgCanvas.height = H;
         const bgCtx = bgCanvas.getContext('2d');
 
         const DOM = {
@@ -227,16 +275,17 @@
             size: document.getElementById('size'),
             eaten: document.getElementById('eaten'),
             finalScore: document.getElementById('finalScore'),
+            finalCombo: document.getElementById('finalCombo'),
             highScoreDisplay: document.getElementById('highScoreDisplay'),
             startScreen: document.getElementById('startScreen'),
             gameOverScreen: document.getElementById('gameOverScreen'),
             pauseOverlay: document.getElementById('pauseOverlay'),
-            newHighScore: document.getElementById('newHighScore')
+            countdownOverlay: document.getElementById('countdownOverlay'),
+            newHighScore: document.getElementById('newHighScore'),
+            comboDisplay: document.getElementById('comboDisplay')
         };
 
         // ========== 工具函数 ==========
-
-        /** 将十六进制颜色转为 {r, g, b} 对象 */
         function hexToRgb(hex) {
             return {
                 r: parseInt(hex.substr(1, 2), 16),
@@ -245,7 +294,6 @@
             };
         }
 
-        /** 将触摸/鼠标事件坐标转为画布坐标 */
         function toCanvasCoords(clientX, clientY) {
             const rect = canvas.getBoundingClientRect();
             return {
@@ -254,21 +302,31 @@
             };
         }
 
-        /** 计算两点距离 */
         function distance(x1, y1, x2, y2) {
-            const dx = x1 - x2;
-            const dy = y1 - y2;
+            const dx = x1 - x2, dy = y1 - y2;
             return Math.sqrt(dx * dx + dy * dy);
         }
 
         // ========== 游戏状态 ==========
-        let gameState = 'start';
+        let gameState = 'start'; // start | countdown | playing | paused | over
         let score = 0;
         let fishEaten = 0;
         let highScore = parseInt(localStorage.getItem('bigFishHighScore')) || 0;
         let animFrame;
         let lastTime = 0;
+        let maxCombo = 0; // 当局最大连击
         DOM.highScoreDisplay.textContent = highScore;
+
+        // Combo 系统
+        let combo = 0;
+        let lastEatTime = 0;
+        let comboTimeout = null;
+
+        // 分数弹出文字
+        let scorePopups = [];
+
+        // 开始界面背景鱼
+        let menuFishes = [];
 
         let player = {
             x: W / 2, y: H / 2,
@@ -285,11 +343,9 @@
         let particles = [];
 
         let keys = {};
-        let mouseX = W / 2;
-        let mouseY = H / 2;
+        let mouseX = W / 2, mouseY = H / 2;
         let useMouseControl = false;
 
-        // 鱼的配色方案
         const fishColors = [
             '#ff7043', '#ff8a65', '#ffab91',
             '#66bb6a', '#81c784', '#a5d6a7',
@@ -300,7 +356,7 @@
             '#ffee58', '#fff176', '#fff59d',
         ];
 
-        // ========== 输入事件 ==========
+        // ========== 输入 ==========
         document.addEventListener('keydown', (e) => {
             keys[e.key] = true;
             useMouseControl = false;
@@ -313,18 +369,15 @@
 
         canvas.addEventListener('mousemove', (e) => {
             const pos = toCanvasCoords(e.clientX, e.clientY);
-            mouseX = pos.x;
-            mouseY = pos.y;
+            mouseX = pos.x; mouseY = pos.y;
             useMouseControl = true;
         });
 
-        // 触控支持（复用 toCanvasCoords）
         function handleTouch(e) {
             e.preventDefault();
             if (e.touches.length > 0) {
                 const pos = toCanvasCoords(e.touches[0].clientX, e.touches[0].clientY);
-                mouseX = pos.x;
-                mouseY = pos.y;
+                mouseX = pos.x; mouseY = pos.y;
                 useMouseControl = true;
             }
         }
@@ -348,17 +401,152 @@
             animFrame = requestAnimationFrame(gameLoop);
         }
 
-        // ========== 创建鱼 ==========
-        function createFish() {
-            let size;
-            let rand = Math.random();
-            if (rand < CONFIG.FISH_SMALL_RATIO) {
-                size = Math.max(CONFIG.FISH_MIN_SIZE,
-                    player.size * (CONFIG.FISH_SMALL_SIZE_MIN + Math.random() * (CONFIG.FISH_SMALL_SIZE_MAX - CONFIG.FISH_SMALL_SIZE_MIN)));
-            } else if (rand < CONFIG.FISH_SIMILAR_RATIO) {
-                size = player.size * (CONFIG.FISH_SIMILAR_SIZE_MIN + Math.random() * (CONFIG.FISH_SIMILAR_SIZE_MAX - CONFIG.FISH_SIMILAR_SIZE_MIN));
+        // ========== 3-2-1 倒计时 ==========
+        function beginCountdown() {
+            DOM.startScreen.classList.add('hidden');
+            DOM.gameOverScreen.classList.add('hidden');
+            DOM.countdownOverlay.classList.remove('hidden');
+            gameState = 'countdown';
+            menuFishes = []; // 停止菜单鱼
+
+            // 重置游戏状态
+            score = 0; fishEaten = 0; maxCombo = 0;
+            combo = 0; lastEatTime = 0;
+            fishes = []; bubbles = []; particles = []; scorePopups = [];
+            player.x = W / 2; player.y = H / 2;
+            player.size = CONFIG.PLAYER_INIT_SIZE;
+            player.speed = CONFIG.PLAYER_INIT_SPEED;
+            player.vx = 0; player.vy = 0;
+
+            for (let i = 0; i < CONFIG.FISH_INIT_COUNT; i++) fishes.push(createFish());
+
+            let count = CONFIG.COUNTDOWN_SECONDS;
+            DOM.countdownOverlay.textContent = count;
+
+            // 在倒计时期间持续绘制背景
+            function countdownRender() {
+                if (gameState !== 'countdown') return;
+                drawBackground();
+                for (let fish of fishes) { drawFish(fish, false); }
+                drawFish(player, true);
+                // 让鱼在倒计时中也动起来
+                for (let fish of fishes) {
+                    fish.x += fish.vx; fish.y += fish.vy;
+                    fish.tailAngle += CONFIG.TAIL_WAGGLE_SPEED;
+                    if (fish.x < -50 || fish.x > W + 50 || fish.y < -50 || fish.y > H + 50) {
+                        let angle = Math.random() * Math.PI * 2;
+                        fish.vx = Math.cos(angle) * fish.speed;
+                        fish.vy = Math.sin(angle) * fish.speed;
+                    }
+                }
+                requestAnimationFrame(countdownRender);
+            }
+            countdownRender();
+
+            let interval = setInterval(() => {
+                count--;
+                if (count > 0) {
+                    DOM.countdownOverlay.textContent = count;
+                } else if (count === 0) {
+                    DOM.countdownOverlay.textContent = 'GO!';
+                } else {
+                    clearInterval(interval);
+                    DOM.countdownOverlay.classList.add('hidden');
+                    gameState = 'playing';
+                    lastTime = 0;
+                    if (animFrame) cancelAnimationFrame(animFrame);
+                    animFrame = requestAnimationFrame(gameLoop);
+                }
+            }, CONFIG.COUNTDOWN_MS);
+        }
+
+        // ========== Combo 系统 ==========
+        function onEatFish(fishSize, fishX, fishY) {
+            let now = performance.now();
+            if (now - lastEatTime < CONFIG.COMBO_WINDOW_MS) {
+                combo = Math.min(combo + 1, CONFIG.COMBO_MAX);
             } else {
-                size = player.size * (CONFIG.FISH_BIG_SIZE_MIN + Math.random() * (CONFIG.FISH_BIG_SIZE_MAX - CONFIG.FISH_BIG_SIZE_MIN));
+                combo = 1;
+            }
+            lastEatTime = now;
+            if (combo > maxCombo) maxCombo = combo;
+
+            // Combo倍率
+            let multiplier = 1 + (combo - 1) * CONFIG.COMBO_MULTIPLIER_STEP;
+            let points = Math.floor(fishSize * CONFIG.SCORE_PER_SIZE * multiplier);
+            score += points;
+            fishEaten++;
+
+            // 分数弹出
+            let text = '+' + points;
+            if (combo > 1) text += ` x${combo}🔥`;
+            scorePopups.push({
+                x: fishX, y: fishY,
+                text: text,
+                alpha: 1,
+                life: CONFIG.SCORE_POPUP_DURATION,
+                color: combo > 3 ? '#ffd54f' : '#fff'
+            });
+
+            // 更新 Combo UI
+            if (combo > 1) {
+                DOM.comboDisplay.textContent = `🔥 ${combo}x Combo!`;
+                DOM.comboDisplay.classList.add('active');
+                DOM.comboDisplay.style.transform = 'scale(1.2)';
+                setTimeout(() => { DOM.comboDisplay.style.transform = 'scale(1)'; }, 150);
+            }
+
+            // 清除之前的combo超时
+            if (comboTimeout) clearTimeout(comboTimeout);
+            comboTimeout = setTimeout(() => {
+                combo = 0;
+                DOM.comboDisplay.classList.remove('active');
+            }, CONFIG.COMBO_WINDOW_MS);
+        }
+
+        // ========== 游戏结束（含屏幕震动） ==========
+        function triggerGameOver() {
+            gameState = 'over';
+            // 屏幕震动
+            canvas.classList.add('shake');
+            setTimeout(() => canvas.classList.remove('shake'), 500);
+            // 延迟显示结束界面
+            setTimeout(() => endGame(), 500);
+        }
+
+        function endGame() {
+            DOM.finalScore.textContent = score;
+            if (maxCombo > 1) {
+                DOM.finalCombo.textContent = `最高连击: ${maxCombo}x`;
+            } else {
+                DOM.finalCombo.textContent = '';
+            }
+            DOM.gameOverScreen.classList.remove('hidden');
+            if (score > highScore) {
+                highScore = score;
+                localStorage.setItem('bigFishHighScore', highScore);
+                DOM.highScoreDisplay.textContent = highScore;
+                DOM.newHighScore.classList.remove('hidden');
+            } else {
+                DOM.newHighScore.classList.add('hidden');
+            }
+        }
+
+        // ========== 创建鱼 ==========
+        function createFish(forMenu) {
+            let size;
+            if (forMenu) {
+                size = 8 + Math.random() * 35;
+            } else {
+                let rand = Math.random();
+                if (rand < CONFIG.FISH_SMALL_RATIO) {
+                    size = Math.max(CONFIG.FISH_MIN_SIZE,
+                        player.size * (CONFIG.FISH_SMALL_SIZE_MIN + Math.random() * (CONFIG.FISH_SMALL_SIZE_MAX - CONFIG.FISH_SMALL_SIZE_MIN)));
+                } else if (rand < CONFIG.FISH_SIMILAR_RATIO) {
+                    size = player.size * (CONFIG.FISH_SIMILAR_SIZE_MIN + Math.random() * (CONFIG.FISH_SIMILAR_SIZE_MAX - CONFIG.FISH_SIMILAR_SIZE_MIN));
+                } else {
+                    size = player.size * (CONFIG.FISH_BIG_SIZE_MIN + Math.random() * (CONFIG.FISH_BIG_SIZE_MAX - CONFIG.FISH_BIG_SIZE_MIN));
+                }
             }
 
             let x, y;
@@ -369,7 +557,7 @@
             else { x = Math.random() * W; y = H + size; }
 
             let speed = CONFIG.FISH_SPEED_MIN + Math.random() * (CONFIG.FISH_SPEED_MAX - CONFIG.FISH_SPEED_MIN);
-            if (size > player.size * CONFIG.FISH_BIG_SLOW_THRESHOLD) speed *= CONFIG.FISH_BIG_SLOW_MULT;
+            if (!forMenu && size > player.size * CONFIG.FISH_BIG_SLOW_THRESHOLD) speed *= CONFIG.FISH_BIG_SLOW_MULT;
 
             let dirX = (W / 2 - x) + (Math.random() - 0.5) * W;
             let dirY = (H / 2 - y) + (Math.random() - 0.5) * H;
@@ -396,15 +584,12 @@
             };
         }
 
-        // ========== 绘制子函数（从 drawFish 拆分） ==========
-
-        /** 绘制鱼身体（椭圆 + 渐变） */
+        // ========== 绘制子函数 ==========
         function drawBody(s, color) {
             ctx.beginPath();
             ctx.ellipse(0, 0, s, s * 0.6, 0, 0, Math.PI * 2);
             ctx.fillStyle = color;
             ctx.fill();
-            // 高光渐变
             let grad = ctx.createRadialGradient(-s * 0.2, -s * 0.2, 0, 0, 0, s);
             grad.addColorStop(0, 'rgba(255,255,255,0.3)');
             grad.addColorStop(1, 'rgba(0,0,0,0.1)');
@@ -412,7 +597,34 @@
             ctx.fill();
         }
 
-        /** 绘制鱼尾巴（带摆动动画） */
+        /** 鱼的纹理 — 根据体型大小显示不同花纹 */
+        function drawFishPattern(s, color) {
+            ctx.save();
+            ctx.globalAlpha = 0.2;
+            if (s > CONFIG.FISH_PATTERN_BIG_THRESHOLD) {
+                // 大鱼：斑点
+                ctx.fillStyle = '#000';
+                for (let i = 0; i < 3; i++) {
+                    ctx.beginPath();
+                    ctx.arc(-s * 0.3 + i * s * 0.3, s * 0.1 * (i % 2 ? 1 : -1), s * 0.08, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            } else if (s > CONFIG.FISH_PATTERN_SIZE_THRESHOLD) {
+                // 中鱼：条纹
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 2;
+                for (let i = 0; i < 3; i++) {
+                    ctx.beginPath();
+                    let px = -s * 0.3 + i * s * 0.3;
+                    ctx.moveTo(px, -s * 0.35);
+                    ctx.lineTo(px, s * 0.35);
+                    ctx.stroke();
+                }
+            }
+            // 小鱼：无花纹
+            ctx.restore();
+        }
+
         function drawTail(s, color, tailAngle) {
             let tailSwing = Math.sin(tailAngle) * CONFIG.TAIL_WAGGLE_AMP;
             ctx.beginPath();
@@ -424,7 +636,6 @@
             ctx.fill();
         }
 
-        /** 绘制背鳍 */
         function drawFin(s, color) {
             ctx.beginPath();
             ctx.moveTo(-s * 0.2, -s * 0.5);
@@ -435,7 +646,6 @@
             ctx.globalAlpha = 1;
         }
 
-        /** 绘制眼睛（眼白 + 瞳孔 + 高光） */
         function drawEye(s) {
             ctx.beginPath();
             ctx.arc(s * 0.4, -s * 0.1, s * 0.18, 0, Math.PI * 2);
@@ -451,7 +661,6 @@
             ctx.fill();
         }
 
-        /** 绘制玩家头顶标记 */
         function drawPlayerMarker(s) {
             ctx.beginPath();
             ctx.arc(0, -s * 0.9, 3, 0, Math.PI * 2);
@@ -459,7 +668,6 @@
             ctx.fill();
         }
 
-        /** 绘制完整的鱼（组装子函数） */
         function drawFish(fish, isPlayer) {
             ctx.save();
             ctx.translate(fish.x, fish.y);
@@ -470,6 +678,7 @@
 
             drawTail(s, fish.color, fish.tailAngle);
             drawBody(s, fish.color);
+            drawFishPattern(s, fish.color);
             drawFin(s, fish.color);
             drawEye(s);
             if (isPlayer) drawPlayerMarker(s);
@@ -477,11 +686,10 @@
             ctx.restore();
         }
 
-        // ========== 大小对比指示器 ==========
+        // ========== 指示器 ==========
         function drawSizeIndicator(fish) {
             let dist = distance(fish.x, fish.y, player.x, player.y);
             if (dist > CONFIG.SIZE_INDICATOR_RANGE) return;
-
             let alpha = 1 - (dist / CONFIG.SIZE_INDICATOR_RANGE);
             let fillColor, strokeColor;
             if (player.size > fish.size * CONFIG.EAT_THRESHOLD) {
@@ -490,9 +698,7 @@
             } else if (fish.size > player.size * CONFIG.EAT_THRESHOLD) {
                 fillColor = CONFIG.INDICATOR_RED;
                 strokeColor = CONFIG.INDICATOR_STROKE_RED;
-            } else {
-                return;
-            }
+            } else { return; }
 
             ctx.save();
             ctx.globalAlpha = alpha * 0.6;
@@ -526,9 +732,33 @@
             ctx.fill();
         }
 
-        /** 渲染静态背景到离屏canvas（仅在初始化时执行一次） */
+        /** 绘制分数弹出文字 */
+        function drawScorePopups() {
+            for (let popup of scorePopups) {
+                ctx.save();
+                ctx.globalAlpha = popup.alpha;
+                ctx.font = 'bold 18px Microsoft YaHei';
+                ctx.fillStyle = popup.color;
+                ctx.textAlign = 'center';
+                ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                ctx.shadowBlur = 4;
+                ctx.fillText(popup.text, popup.x, popup.y);
+                ctx.restore();
+            }
+        }
+
+        function updateScorePopups(dt) {
+            for (let i = scorePopups.length - 1; i >= 0; i--) {
+                let p = scorePopups[i];
+                p.y -= CONFIG.SCORE_POPUP_RISE_SPEED * dt;
+                p.life -= dt;
+                p.alpha -= CONFIG.SCORE_POPUP_FADE * dt;
+                if (p.life <= 0 || p.alpha <= 0) scorePopups.splice(i, 1);
+            }
+        }
+
+        // ========== 背景 ==========
         function renderStaticBackground() {
-            // 海洋渐变
             let grad = bgCtx.createLinearGradient(0, 0, 0, H);
             grad.addColorStop(0, '#0d2137');
             grad.addColorStop(0.5, '#0a3d5c');
@@ -536,7 +766,6 @@
             bgCtx.fillStyle = grad;
             bgCtx.fillRect(0, 0, W, H);
 
-            // 光线（静态部分）
             bgCtx.save();
             bgCtx.globalAlpha = 0.03;
             for (let i = 0; i < CONFIG.LIGHT_RAY_COUNT; i++) {
@@ -551,7 +780,6 @@
             bgCtx.restore();
         }
 
-        /** 绘制海藻（动态摆动部分，需每帧重绘） */
         function drawSeaweed() {
             ctx.save();
             ctx.globalAlpha = 0.15;
@@ -561,9 +789,7 @@
                 ctx.beginPath();
                 ctx.moveTo(baseX, H);
                 for (let j = 0; j < CONFIG.SEAWEED_SEGMENTS; j++) {
-                    let y = H - j * CONFIG.SEAWEED_SEG_HEIGHT;
-                    let x = baseX + Math.sin(time + i + j * 0.5) * 10;
-                    ctx.lineTo(x, y);
+                    ctx.lineTo(baseX + Math.sin(time + i + j * 0.5) * 10, H - j * CONFIG.SEAWEED_SEG_HEIGHT);
                 }
                 ctx.strokeStyle = '#2e7d32';
                 ctx.lineWidth = 4;
@@ -572,7 +798,6 @@
             ctx.restore();
         }
 
-        /** 合成背景：静态离屏 + 动态海藻 */
         function drawBackground() {
             ctx.drawImage(bgCanvas, 0, 0);
             drawSeaweed();
@@ -587,17 +812,15 @@
                     vx: Math.cos(angle) * (1 + Math.random() * CONFIG.PARTICLE_SPEED_RANGE),
                     vy: Math.sin(angle) * (1 + Math.random() * CONFIG.PARTICLE_SPEED_RANGE),
                     size: CONFIG.PARTICLE_SIZE_MIN + Math.random() * CONFIG.PARTICLE_SIZE_RANGE,
-                    alpha: 1,
-                    r: rgb.r, g: rgb.g, b: rgb.b
+                    alpha: 1, r: rgb.r, g: rgb.g, b: rgb.b
                 });
             }
         }
 
-        // ========== 更新函数（帧率无关） ==========
+        // ========== 更新函数 ==========
         function updatePlayer(dt) {
             if (useMouseControl) {
-                let dx = mouseX - player.x;
-                let dy = mouseY - player.y;
+                let dx = mouseX - player.x, dy = mouseY - player.y;
                 let dist = Math.sqrt(dx * dx + dy * dy);
                 if (dist > CONFIG.MOUSE_DEAD_ZONE) {
                     player.vx += (dx / dist) * CONFIG.PLAYER_ACCEL_MOUSE * dt;
@@ -610,9 +833,8 @@
                 if (keys['ArrowDown'] || keys['s']) player.vy += CONFIG.PLAYER_ACCEL_KEY * dt;
             }
 
-            let friction = Math.pow(CONFIG.PLAYER_FRICTION, dt);
-            player.vx *= friction;
-            player.vy *= friction;
+            player.vx *= Math.pow(CONFIG.PLAYER_FRICTION, dt);
+            player.vy *= Math.pow(CONFIG.PLAYER_FRICTION, dt);
 
             let speed = Math.sqrt(player.vx * player.vx + player.vy * player.vy);
             let maxSpeed = player.speed + player.size * CONFIG.PLAYER_SPEED_PER_SIZE;
@@ -623,7 +845,6 @@
 
             player.x += player.vx * dt;
             player.y += player.vy * dt;
-
             player.x = Math.max(player.size, Math.min(W - player.size, player.x));
             player.y = Math.max(player.size, Math.min(H - player.size, player.y));
 
@@ -634,8 +855,6 @@
         function updateFishes(dt) {
             for (let i = fishes.length - 1; i >= 0; i--) {
                 let fish = fishes[i];
-
-                // 定时改变方向
                 fish.changeTimer -= dt;
                 if (fish.changeTimer <= 0) {
                     fish.changeTimer = CONFIG.FISH_DIR_CHANGE_MIN + Math.random() * (CONFIG.FISH_DIR_CHANGE_MAX - CONFIG.FISH_DIR_CHANGE_MIN);
@@ -644,11 +863,8 @@
                     fish.vy = Math.sin(angle) * fish.speed;
                 }
 
-                // AI：小鱼逃，大鱼追
-                let dx = player.x - fish.x;
-                let dy = player.y - fish.y;
+                let dx = player.x - fish.x, dy = player.y - fish.y;
                 let dist = Math.sqrt(dx * dx + dy * dy);
-
                 if (dist < CONFIG.FISH_AI_RANGE && dist > 0) {
                     if (fish.size < player.size * CONFIG.FISH_FLEE_THRESHOLD) {
                         fish.vx -= (dx / dist) * CONFIG.FISH_FLEE_FORCE * dt;
@@ -659,7 +875,6 @@
                     }
                 }
 
-                // 限速
                 let fSpeed = Math.sqrt(fish.vx * fish.vx + fish.vy * fish.vy);
                 let fishMaxSpeed = fish.speed * CONFIG.FISH_SPEED_LIMIT_MULT;
                 if (fSpeed > fishMaxSpeed) {
@@ -673,38 +888,30 @@
                 if (fish.vx > CONFIG.DIR_THRESHOLD) fish.direction = 1;
                 else if (fish.vx < -CONFIG.DIR_THRESHOLD) fish.direction = -1;
 
-                // 移出屏幕则移除
                 let margin = CONFIG.FISH_OFFSCREEN_MARGIN;
                 if (fish.x < -margin || fish.x > W + margin || fish.y < -margin || fish.y > H + margin) {
                     fishes.splice(i, 1);
                 }
             }
 
-            // 维持鱼群数量
             let targetCount = CONFIG.FISH_BASE_COUNT + Math.floor(player.size / CONFIG.FISH_PER_SIZE);
-            while (fishes.length < targetCount) {
-                fishes.push(createFish());
-            }
+            while (fishes.length < targetCount) fishes.push(createFish());
         }
 
-        /** AI鱼之间互相碰撞检测 — 大鱼吃小鱼 */
-        function checkFishCollisions(dt) {
+        function checkFishCollisions() {
             for (let i = fishes.length - 1; i >= 0; i--) {
                 let a = fishes[i];
-                if (!a) continue; // 可能已被吃掉
+                if (!a) continue;
                 for (let j = fishes.length - 1; j >= 0; j--) {
                     if (i === j) continue;
                     let b = fishes[j];
                     if (!b) continue;
-
                     let dist = distance(a.x, a.y, b.x, b.y);
-                    if (dist < a.size * CONFIG.FISH_AI_COLLISION_FACTOR + b.size * CONFIG.FISH_AI_COLLISION_FACTOR) {
-                        // a 比 b 大很多 → a 吃 b
+                    if (dist < (a.size + b.size) * CONFIG.FISH_AI_COLLISION_FACTOR) {
                         if (a.size > b.size * CONFIG.FISH_AI_EAT_THRESHOLD) {
                             a.size += b.size * CONFIG.FISH_AI_EAT_GROWTH;
                             createEatParticles(b.x, b.y, b.color);
                             fishes.splice(j, 1);
-                            // 如果 j < i，i 的索引需要调整
                             if (j < i) i--;
                         }
                     }
@@ -716,17 +923,14 @@
             for (let i = fishes.length - 1; i >= 0; i--) {
                 let fish = fishes[i];
                 let dist = distance(player.x, player.y, fish.x, fish.y);
-
                 if (dist < player.size * CONFIG.COLLISION_PLAYER_FACTOR + fish.size * CONFIG.COLLISION_FISH_FACTOR) {
                     if (player.size > fish.size * CONFIG.EAT_THRESHOLD) {
-                        score += Math.floor(fish.size * CONFIG.SCORE_PER_SIZE);
-                        fishEaten++;
+                        onEatFish(fish.size, fish.x, fish.y);
                         player.size += fish.size * CONFIG.PLAYER_GROWTH_RATE;
                         createEatParticles(fish.x, fish.y, fish.color);
                         fishes.splice(i, 1);
                     } else if (fish.size > player.size * CONFIG.EAT_THRESHOLD) {
-                        gameState = 'over';
-                        endGame();
+                        triggerGameOver();
                         return;
                     }
                 }
@@ -734,9 +938,7 @@
         }
 
         function updateBubbles(dt) {
-            if (Math.random() < CONFIG.BUBBLE_SPAWN_CHANCE * dt) {
-                bubbles.push(createBubble());
-            }
+            if (Math.random() < CONFIG.BUBBLE_SPAWN_CHANCE * dt) bubbles.push(createBubble());
             for (let i = bubbles.length - 1; i >= 0; i--) {
                 let b = bubbles[i];
                 b.y -= b.speed * dt;
@@ -763,21 +965,34 @@
             DOM.eaten.textContent = fishEaten;
         }
 
-        // ========== 游戏结束 ==========
-        function endGame() {
-            DOM.finalScore.textContent = score;
-            DOM.gameOverScreen.classList.remove('hidden');
-            if (score > highScore) {
-                highScore = score;
-                localStorage.setItem('bigFishHighScore', highScore);
-                DOM.highScoreDisplay.textContent = highScore;
-                DOM.newHighScore.classList.remove('hidden');
-            } else {
-                DOM.newHighScore.classList.add('hidden');
+        // ========== 开始界面动画 ==========
+        function initMenuFishes() {
+            menuFishes = [];
+            for (let i = 0; i < CONFIG.MENU_FISH_COUNT; i++) {
+                menuFishes.push(createFish(true));
             }
         }
 
-        // ========== 游戏主循环 ==========
+        function menuLoop() {
+            if (gameState !== 'start') return;
+            drawBackground();
+            for (let fish of menuFishes) {
+                fish.x += fish.vx * 0.5;
+                fish.y += fish.vy * 0.5;
+                fish.tailAngle += CONFIG.TAIL_WAGGLE_SPEED;
+                if (fish.vx > CONFIG.DIR_THRESHOLD) fish.direction = 1;
+                else if (fish.vx < -CONFIG.DIR_THRESHOLD) fish.direction = -1;
+                // 绕回
+                if (fish.x < -60) fish.x = W + 50;
+                if (fish.x > W + 60) fish.x = -50;
+                if (fish.y < -60) fish.y = H + 50;
+                if (fish.y > H + 60) fish.y = -50;
+                drawFish(fish, false);
+            }
+            requestAnimationFrame(menuLoop);
+        }
+
+        // ========== 主循环 ==========
         function gameLoop(timestamp) {
             if (gameState !== 'playing') return;
 
@@ -786,59 +1001,31 @@
             lastTime = timestamp;
             let dt = Math.min(elapsed / CONFIG.TARGET_FRAME_MS, 3);
 
-            // 绘制
             drawBackground();
             for (let fish of fishes) drawSizeIndicator(fish);
             for (let b of bubbles) drawBubble(b);
             for (let p of particles) drawParticle(p);
             for (let fish of fishes) drawFish(fish, false);
             drawFish(player, true);
+            drawScorePopups();
 
-            // 更新
             updatePlayer(dt);
             updateFishes(dt);
-            checkFishCollisions(dt);
+            checkFishCollisions();
             checkCollisions();
             updateBubbles(dt);
             updateParticles(dt);
+            updateScorePopups(dt);
             updateUI();
 
             animFrame = requestAnimationFrame(gameLoop);
         }
 
-        // ========== 开始游戏 ==========
-        function startGame() {
-            score = 0;
-            fishEaten = 0;
-            fishes = [];
-            bubbles = [];
-            particles = [];
-
-            player.x = W / 2;
-            player.y = H / 2;
-            player.size = CONFIG.PLAYER_INIT_SIZE;
-            player.speed = CONFIG.PLAYER_INIT_SPEED;
-            player.vx = 0;
-            player.vy = 0;
-
-            for (let i = 0; i < CONFIG.FISH_INIT_COUNT; i++) {
-                fishes.push(createFish());
-            }
-
-            gameState = 'playing';
-            lastTime = 0;
-            DOM.startScreen.classList.add('hidden');
-            DOM.gameOverScreen.classList.add('hidden');
-            DOM.pauseOverlay.classList.add('hidden');
-
-            if (animFrame) cancelAnimationFrame(animFrame);
-            animFrame = requestAnimationFrame(gameLoop);
-        }
-
-        // 渲染静态背景到离屏canvas（一次性）
+        // 初始化
         renderStaticBackground();
-        // 绘制初始背景
+        initMenuFishes();
         drawBackground();
+        menuLoop();
     </script>
 </body>
 </html>

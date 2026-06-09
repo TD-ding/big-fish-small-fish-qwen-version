@@ -392,6 +392,7 @@
         let gameStartTime = 0; // 用于难度递进
         let difficulty = 0;
         let powerupSpawnTimer = 0;
+        let countdownInterval = null; // 防止倒计时重入
         DOM.highScoreDisplay.textContent = highScore;
 
         // Combo
@@ -498,17 +499,33 @@
 
         // ========== 倒计时 ==========
         function beginCountdown() {
+            // 防止重入：取消之前的倒计时
+            if (countdownInterval) {
+                clearInterval(countdownInterval);
+                countdownInterval = null;
+            }
+            if (animFrame) {
+                cancelAnimationFrame(animFrame);
+                animFrame = null;
+            }
+            if (comboTimeout) {
+                clearTimeout(comboTimeout);
+                comboTimeout = null;
+            }
+
             initAudio();
             DOM.startScreen.classList.add('hidden');
             DOM.gameOverScreen.classList.add('hidden');
             DOM.countdownOverlay.classList.remove('hidden');
+            DOM.comboDisplay.classList.remove('active');
+            canvas.classList.remove('shield-border');
             gameState = 'countdown';
             menuFishes = [];
 
             score = 0; fishEaten = 0; maxCombo = 0;
             combo = 0; lastEatTime = 0;
             shieldTimer = 0; speedBoostTimer = 0; magnetTimer = 0;
-            powerupSpawnTimer = 0;
+            powerupSpawnTimer = CONFIG.POWERUP_SPAWN_INTERVAL; // 不要立即生成道具
             fishes = []; bubbles = []; particles = []; scorePopups = []; powerups = [];
             player.x = W / 2; player.y = H / 2;
             player.size = CONFIG.PLAYER_INIT_SIZE;
@@ -540,7 +557,7 @@
             }
             countdownRender();
 
-            let interval = setInterval(() => {
+            countdownInterval = setInterval(() => {
                 count--;
                 if (count > 0) {
                     DOM.countdownOverlay.textContent = count;
@@ -549,7 +566,8 @@
                     DOM.countdownOverlay.textContent = 'GO!';
                     playSound('go');
                 } else {
-                    clearInterval(interval);
+                    clearInterval(countdownInterval);
+                    countdownInterval = null;
                     DOM.countdownOverlay.classList.add('hidden');
                     gameState = 'playing';
                     gameStartTime = performance.now();
@@ -611,9 +629,20 @@
 
         // ========== 游戏结束 ==========
         function triggerGameOver(reason) {
+            if (gameState === 'over') return; // 防止双重触发
             gameState = 'over';
             playSound('gameover');
+
+            // 清理定时器
+            if (comboTimeout) {
+                clearTimeout(comboTimeout);
+                comboTimeout = null;
+            }
+
+            // 清理 UI 状态
             canvas.classList.add('shake');
+            DOM.comboDisplay.classList.remove('active');
+
             setTimeout(() => canvas.classList.remove('shake'), 500);
             setTimeout(() => endGame(reason), 500);
         }
@@ -624,6 +653,7 @@
             DOM.finalCombo.textContent = maxCombo > 1 ? `最高连击: ${maxCombo}x` : '';
             DOM.gameOverScreen.classList.remove('hidden');
             DOM.powerupBar.innerHTML = '';
+            canvas.classList.remove('shield-border'); // 清理护盾样式
             if (score > highScore) {
                 highScore = score;
                 localStorage.setItem('bigFishHighScore', highScore);
@@ -1285,8 +1315,6 @@
                     }
 
                     if (player.size > fish.size * CONFIG.EAT_THRESHOLD) {
-                        // 有护盾时无视大小差异直接吃
-                        let canEat = player.size > fish.size * CONFIG.EAT_THRESHOLD;
                         onEatFish(fish.size, fish.x, fish.y, fish.type === 'golden');
                         player.size += fish.size * CONFIG.PLAYER_GROWTH_RATE;
                         createEatParticles(fish.x, fish.y, fish.color);

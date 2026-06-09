@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>大鱼吃小鱼 - Qwen Version</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #0a1628;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Microsoft YaHei', sans-serif;
+            overflow: hidden;
+        }
+        #gameContainer {
+            position: relative;
+        }
+        canvas {
+            border: 3px solid #1a3a5c;
+            border-radius: 8px;
+            box-shadow: 0 0 30px rgba(0, 100, 200, 0.3);
+        }
+        #ui {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: #fff;
+            font-size: 18px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        #ui div {
+            margin-bottom: 5px;
+        }
+        #startScreen, #gameOverScreen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: rgba(10, 22, 40, 0.85);
+            color: #fff;
+            border-radius: 8px;
+        }
+        #startScreen h1, #gameOverScreen h1 {
+            font-size: 48px;
+            margin-bottom: 20px;
+            color: #4fc3f7;
+            text-shadow: 0 0 20px rgba(79, 195, 247, 0.5);
+        }
+        #startScreen p, #gameOverScreen p {
+            font-size: 18px;
+            margin-bottom: 10px;
+            color: #b0bec5;
+        }
+        .btn {
+            margin-top: 20px;
+            padding: 12px 40px;
+            font-size: 20px;
+            background: linear-gradient(135deg, #4fc3f7, #0288d1);
+            border: none;
+            border-radius: 25px;
+            color: #fff;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 20px rgba(79, 195, 247, 0.5);
+        }
+        #finalScore {
+            font-size: 36px;
+            color: #ffd54f;
+            margin: 10px 0;
+        }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="900" height="600"></canvas>
+        <div id="ui">
+            <div>🐟 分数: <span id="score">0</span></div>
+            <div>📏 大小: <span id="size">1</span></div>
+            <div>🐠 吃掉: <span id="eaten">0</span> 条鱼</div>
+        </div>
+        <div id="startScreen">
+            <h1>🐟 大鱼吃小鱼 🐟</h1>
+            <p>用鼠标或方向键控制你的鱼</p>
+            <p>吃掉比你小的鱼来长大</p>
+            <p>躲开比你大的鱼，否则会被吃掉！</p>
+            <button class="btn" onclick="startGame()">开始游戏</button>
+        </div>
+        <div id="gameOverScreen" class="hidden">
+            <h1>游戏结束</h1>
+            <p>你被更大的鱼吃掉了！</p>
+            <div id="finalScore">0</div>
+            <p>最终得分</p>
+            <button class="btn" onclick="startGame()">再来一次</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const W = canvas.width;
+        const H = canvas.height;
+
+        // Game state
+        let gameState = 'start'; // start, playing, over
+        let score = 0;
+        let fishEaten = 0;
+        let animFrame;
+
+        // Player fish
+        let player = {
+            x: W / 2,
+            y: H / 2,
+            size: 20,
+            speed: 3,
+            vx: 0,
+            vy: 0,
+            color: '#4fc3f7',
+            tailAngle: 0,
+            direction: 1 // 1 = right, -1 = left
+        };
+
+        // AI fish array
+        let fishes = [];
+        let bubbles = [];
+        let particles = [];
+
+        // Input tracking
+        let keys = {};
+        let mouseX = W / 2;
+        let mouseY = H / 2;
+        let useMouseControl = false;
+
+        // Fish colors palette
+        const fishColors = [
+            '#ff7043', '#ff8a65', '#ffab91',  // orange shades
+            '#66bb6a', '#81c784', '#a5d6a7',  // green shades
+            '#ffa726', '#ffb74d', '#ffcc80',  // yellow-orange
+            '#ef5350', '#e57373', '#ef9a9a',  // red shades
+            '#ab47bc', '#ba68c8', '#ce93d8',  // purple
+            '#42a5f5', '#64b5f6', '#90caf9',  // blue
+            '#ffee58', '#fff176', '#fff59d',  // yellow
+        ];
+
+        // --- Input Handlers ---
+        document.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+            useMouseControl = false;
+        });
+        document.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+            useMouseControl = true;
+        });
+
+        // --- Fish Creation ---
+        function createFish() {
+            let size;
+            let rand = Math.random();
+            if (rand < 0.5) {
+                // 50% smaller than player
+                size = Math.max(5, player.size * (0.2 + Math.random() * 0.7));
+            } else if (rand < 0.85) {
+                // 35% slightly smaller or similar
+                size = player.size * (0.8 + Math.random() * 0.4);
+            } else {
+                // 15% bigger than player
+                size = player.size * (1.2 + Math.random() * 0.8);
+            }
+
+            let x, y;
+            let side = Math.floor(Math.random() * 4);
+            if (side === 0) { x = -size; y = Math.random() * H; }
+            else if (side === 1) { x = W + size; y = Math.random() * H; }
+            else if (side === 2) { x = Math.random() * W; y = -size; }
+            else { x = Math.random() * W; y = H + size; }
+
+            let speed = 0.5 + Math.random() * 2;
+            if (size > player.size * 1.5) speed *= 0.7;
+
+            let dirX = (W / 2 - x) + (Math.random() - 0.5) * W;
+            let dirY = (H / 2 - y) + (Math.random() - 0.5) * H;
+            let len = Math.sqrt(dirX * dirX + dirY * dirY);
+
+            return {
+                x: x,
+                y: y,
+                size: size,
+                speed: speed,
+                vx: (dirX / len) * speed,
+                vy: (dirY / len) * speed,
+                color: fishColors[Math.floor(Math.random() * fishColors.length)],
+                tailAngle: Math.random() * Math.PI * 2,
+                direction: (dirX / len) > 0 ? 1 : -1,
+                alive: true,
+                changeTimer: 100 + Math.random() * 200
+            };
+        }
+
+        function createBubble() {
+            return {
+                x: Math.random() * W,
+                y: H + 10,
+                size: 2 + Math.random() * 5,
+                speed: 0.3 + Math.random() * 0.7,
+                wobble: Math.random() * Math.PI * 2
+            };
+        }
+
+        // --- Drawing Functions ---
+        function drawFish(fish, isPlayer) {
+            ctx.save();
+            ctx.translate(fish.x, fish.y);
+
+            let dir = fish.direction;
+            ctx.scale(dir, 1);
+
+            let s = fish.size;
+
+            // Tail animation
+            fish.tailAngle += 0.1;
+            let tailSwing = Math.sin(fish.tailAngle) * 0.3;
+
+            // Body
+            ctx.beginPath();
+            ctx.ellipse(0, 0, s, s * 0.6, 0, 0, Math.PI * 2);
+            ctx.fillStyle = fish.color;
+            ctx.fill();
+
+            // Body gradient overlay
+            let grad = ctx.createRadialGradient(-s * 0.2, -s * 0.2, 0, 0, 0, s);
+            grad.addColorStop(0, 'rgba(255,255,255,0.3)');
+            grad.addColorStop(1, 'rgba(0,0,0,0.1)');
+            ctx.fillStyle = grad;
+            ctx.fill();
+
+            // Tail
+            ctx.beginPath();
+            ctx.moveTo(-s * 0.8, 0);
+            ctx.lineTo(-s * 1.4, -s * 0.5 + tailSwing * s);
+            ctx.lineTo(-s * 1.4, s * 0.5 + tailSwing * s);
+            ctx.closePath();
+            ctx.fillStyle = fish.color;
+            ctx.fill();
+
+            // Dorsal fin
+            ctx.beginPath();
+            ctx.moveTo(-s * 0.2, -s * 0.5);
+            ctx.quadraticCurveTo(s * 0.1, -s * 0.9, s * 0.3, -s * 0.5);
+            ctx.fillStyle = fish.color;
+            ctx.globalAlpha = 0.7;
+            ctx.fill();
+            ctx.globalAlpha = 1;
+
+            // Eye
+            ctx.beginPath();
+            ctx.arc(s * 0.4, -s * 0.1, s * 0.18, 0, Math.PI * 2);
+            ctx.fillStyle = '#fff';
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(s * 0.45, -s * 0.1, s * 0.09, 0, Math.PI * 2);
+            ctx.fillStyle = '#000';
+            ctx.fill();
+
+            // Highlight on eye
+            ctx.beginPath();
+            ctx.arc(s * 0.47, -s * 0.14, s * 0.04, 0, Math.PI * 2);
+            ctx.fillStyle = '#fff';
+            ctx.fill();
+
+            // Player indicator
+            if (isPlayer) {
+                ctx.beginPath();
+                ctx.arc(0, -s * 0.9, 3, 0, Math.PI * 2);
+                ctx.fillStyle = '#ffd54f';
+                ctx.fill();
+            }
+
+            ctx.restore();
+        }
+
+        function drawBubble(bubble) {
+            ctx.beginPath();
+            ctx.arc(bubble.x, bubble.y, bubble.size, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(bubble.x - bubble.size * 0.3, bubble.y - bubble.size * 0.3, bubble.size * 0.2, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+            ctx.fill();
+        }
+
+        function drawParticle(p) {
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(${p.r}, ${p.g}, ${p.b}, ${p.alpha})`;
+            ctx.fill();
+        }
+
+        function drawBackground() {
+            // Ocean gradient
+            let grad = ctx.createLinearGradient(0, 0, 0, H);
+            grad.addColorStop(0, '#0d2137');
+            grad.addColorStop(0.5, '#0a3d5c');
+            grad.addColorStop(1, '#062a3e');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, W, H);
+
+            // Light rays
+            ctx.save();
+            ctx.globalAlpha = 0.03;
+            for (let i = 0; i < 5; i++) {
+                ctx.beginPath();
+                ctx.moveTo(150 + i * 180, 0);
+                ctx.lineTo(100 + i * 180, H);
+                ctx.lineTo(200 + i * 180, H);
+                ctx.closePath();
+                ctx.fillStyle = '#4fc3f7';
+                ctx.fill();
+            }
+            ctx.restore();
+
+            // Seaweed
+            ctx.save();
+            ctx.globalAlpha = 0.15;
+            let time = Date.now() / 1000;
+            for (let i = 0; i < 8; i++) {
+                let baseX = 60 + i * 120;
+                ctx.beginPath();
+                ctx.moveTo(baseX, H);
+                for (let j = 0; j < 5; j++) {
+                    let y = H - j * 30;
+                    let x = baseX + Math.sin(time + i + j * 0.5) * 10;
+                    ctx.lineTo(x, y);
+                }
+                ctx.strokeStyle = '#2e7d32';
+                ctx.lineWidth = 4;
+                ctx.stroke();
+            }
+            ctx.restore();
+        }
+
+        function createEatParticles(x, y, color) {
+            let r = parseInt(color.substr(1, 2), 16);
+            let g = parseInt(color.substr(3, 2), 16);
+            let b = parseInt(color.substr(5, 2), 16);
+            for (let i = 0; i < 8; i++) {
+                let angle = (Math.PI * 2 / 8) * i;
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: Math.cos(angle) * (1 + Math.random() * 2),
+                    vy: Math.sin(angle) * (1 + Math.random() * 2),
+                    size: 2 + Math.random() * 3,
+                    alpha: 1,
+                    r: r, g: g, b: b
+                });
+            }
+        }
+
+        // --- Update Functions ---
+        function updatePlayer() {
+            if (useMouseControl) {
+                let dx = mouseX - player.x;
+                let dy = mouseY - player.y;
+                let dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist > 5) {
+                    player.vx += (dx / dist) * 0.3;
+                    player.vy += (dy / dist) * 0.3;
+                }
+            } else {
+                if (keys['ArrowLeft'] || keys['a']) player.vx -= 0.4;
+                if (keys['ArrowRight'] || keys['d']) player.vx += 0.4;
+                if (keys['ArrowUp'] || keys['w']) player.vy -= 0.4;
+                if (keys['ArrowDown'] || keys['s']) player.vy += 0.4;
+            }
+
+            // Apply friction
+            player.vx *= 0.92;
+            player.vy *= 0.92;
+
+            // Speed limit
+            let speed = Math.sqrt(player.vx * player.vx + player.vy * player.vy);
+            let maxSpeed = player.speed + player.size * 0.02;
+            if (speed > maxSpeed) {
+                player.vx = (player.vx / speed) * maxSpeed;
+                player.vy = (player.vy / speed) * maxSpeed;
+            }
+
+            player.x += player.vx;
+            player.y += player.vy;
+
+            // Boundary
+            player.x = Math.max(player.size, Math.min(W - player.size, player.x));
+            player.y = Math.max(player.size, Math.min(H - player.size, player.y));
+
+            // Direction
+            if (player.vx > 0.1) player.direction = 1;
+            else if (player.vx < -0.1) player.direction = -1;
+        }
+
+        function updateFishes() {
+            for (let i = fishes.length - 1; i >= 0; i--) {
+                let fish = fishes[i];
+
+                // Change direction periodically
+                fish.changeTimer--;
+                if (fish.changeTimer <= 0) {
+                    fish.changeTimer = 100 + Math.random() * 200;
+                    let angle = Math.random() * Math.PI * 2;
+                    fish.vx = Math.cos(angle) * fish.speed;
+                    fish.vy = Math.sin(angle) * fish.speed;
+                }
+
+                // AI: small fish flee from player, big fish chase
+                let dx = player.x - fish.x;
+                let dy = player.y - fish.y;
+                let dist = Math.sqrt(dx * dx + dy * dy);
+
+                if (dist < 150) {
+                    if (fish.size < player.size * 0.8) {
+                        // Flee
+                        fish.vx -= (dx / dist) * 0.15;
+                        fish.vy -= (dy / dist) * 0.15;
+                    } else if (fish.size > player.size * 1.2) {
+                        // Chase
+                        fish.vx += (dx / dist) * 0.08;
+                        fish.vy += (dy / dist) * 0.08;
+                    }
+                }
+
+                // Limit speed
+                let fSpeed = Math.sqrt(fish.vx * fish.vx + fish.vy * fish.vy);
+                if (fSpeed > fish.speed * 2) {
+                    fish.vx = (fish.vx / fSpeed) * fish.speed * 2;
+                    fish.vy = (fish.vy / fSpeed) * fish.speed * 2;
+                }
+
+                fish.x += fish.vx;
+                fish.y += fish.vy;
+
+                // Direction
+                if (fish.vx > 0.1) fish.direction = 1;
+                else if (fish.vx < -0.1) fish.direction = -1;
+
+                // Remove off-screen fish
+                if (fish.x < -100 || fish.x > W + 100 || fish.y < -100 || fish.y > H + 100) {
+                    fishes.splice(i, 1);
+                }
+            }
+
+            // Maintain fish count
+            let targetCount = 15 + Math.floor(player.size / 5);
+            while (fishes.length < targetCount) {
+                fishes.push(createFish());
+            }
+        }
+
+        function checkCollisions() {
+            for (let i = fishes.length - 1; i >= 0; i--) {
+                let fish = fishes[i];
+                let dx = player.x - fish.x;
+                let dy = player.y - fish.y;
+                let dist = Math.sqrt(dx * dx + dy * dy);
+
+                if (dist < player.size * 0.7 + fish.size * 0.5) {
+                    if (player.size > fish.size * 1.1) {
+                        // Eat the fish
+                        score += Math.floor(fish.size * 10);
+                        fishEaten++;
+                        player.size += fish.size * 0.05;
+                        createEatParticles(fish.x, fish.y, fish.color);
+                        fishes.splice(i, 1);
+                    } else if (fish.size > player.size * 1.1) {
+                        // Game over
+                        gameState = 'over';
+                        document.getElementById('finalScore').textContent = score;
+                        document.getElementById('gameOverScreen').classList.remove('hidden');
+                        return;
+                    }
+                }
+            }
+        }
+
+        function updateBubbles() {
+            if (Math.random() < 0.02) {
+                bubbles.push(createBubble());
+            }
+            for (let i = bubbles.length - 1; i >= 0; i--) {
+                let b = bubbles[i];
+                b.y -= b.speed;
+                b.wobble += 0.02;
+                b.x += Math.sin(b.wobble) * 0.3;
+                if (b.y < -10) bubbles.splice(i, 1);
+            }
+        }
+
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.alpha -= 0.02;
+                p.size *= 0.98;
+                if (p.alpha <= 0) particles.splice(i, 1);
+            }
+        }
+
+        function updateUI() {
+            document.getElementById('score').textContent = score;
+            document.getElementById('size').textContent = Math.floor(player.size);
+            document.getElementById('eaten').textContent = fishEaten;
+        }
+
+        // --- Game Loop ---
+        function gameLoop() {
+            if (gameState !== 'playing') return;
+
+            drawBackground();
+
+            // Draw bubbles
+            for (let b of bubbles) drawBubble(b);
+
+            // Draw particles
+            for (let p of particles) drawParticle(p);
+
+            // Draw AI fish
+            for (let fish of fishes) drawFish(fish, false);
+
+            // Draw player
+            drawFish(player, true);
+
+            // Update
+            updatePlayer();
+            updateFishes();
+            checkCollisions();
+            updateBubbles();
+            updateParticles();
+            updateUI();
+
+            animFrame = requestAnimationFrame(gameLoop);
+        }
+
+        // --- Game Start ---
+        function startGame() {
+            // Reset state
+            score = 0;
+            fishEaten = 0;
+            fishes = [];
+            bubbles = [];
+            particles = [];
+
+            player.x = W / 2;
+            player.y = H / 2;
+            player.size = 20;
+            player.vx = 0;
+            player.vy = 0;
+            player.speed = 3;
+
+            // Initial fish population
+            for (let i = 0; i < 20; i++) {
+                fishes.push(createFish());
+            }
+
+            gameState = 'playing';
+            document.getElementById('startScreen').classList.add('hidden');
+            document.getElementById('gameOverScreen').classList.add('hidden');
+
+            if (animFrame) cancelAnimationFrame(animFrame);
+            gameLoop();
+        }
+
+        // Draw initial background
+        drawBackground();
+    </script>
+</body>
+</html>
